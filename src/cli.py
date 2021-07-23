@@ -80,6 +80,8 @@ def create_parser():
                              'the logits with the given weight (default: only have one output)')
     parser.add_argument('--ema-decay', default=0.97, type=float, metavar='ALPHA',
                         help='ema variable decay rate (default: 0.97)') # MT- ONLY!
+    parser.add_argument('--lr-rampdown-epochs', default=210, type=int, metavar='RAMPDOWN',
+                        help='lr rampdown epochs (default: 210)')  # MT- ONLY!
 
     # for Multiple Student
     parser.add_argument('--model-num', default=2, type=int, metavar='MS',

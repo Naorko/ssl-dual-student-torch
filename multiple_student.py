@@ -1,5 +1,4 @@
 import logging
-import os
 import time
 from itertools import combinations
 
@@ -11,7 +10,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 import dual_student
-from dual_student import create_model, create_data_loaders, adjust_learning_rate, validate
+from dual_student import create_model, adjust_learning_rate, validate
 from src import ramps, cli, datasets, mt_func, run_context, losses
 from src.data import NO_LABEL
 from src.utils import *
@@ -26,8 +25,6 @@ global_step = 0
 def train_epoch(train_loader, model_list, optimizer_list, epoch, log):
     global global_step
 
-    msi_flag = args.model_arch == 'msi'
-
     meters = AverageMeterSet()
 
     # define criterions
@@ -36,7 +33,6 @@ def train_epoch(train_loader, model_list, optimizer_list, epoch, log):
 
     consistency_criterion = losses.softmax_mse_loss
     stabilization_criterion = losses.softmax_mse_loss
-
 
     for model in model_list:
         model.train()
@@ -120,15 +116,13 @@ def train_epoch(train_loader, model_list, optimizer_list, epoch, log):
 
         # calculate stablization weight
         stabilization_weight = args.stabilization_scale * ramps.sigmoid_rampup(epoch, args.stabilization_rampup)
-        if not args.exclude_unlabeled:
-            stabilization_weight = (unlabeled_minibatch_size / minibatch_size) * stabilization_weight
+        stabilization_weight = (unlabeled_minibatch_size / minibatch_size) * stabilization_weight
 
-        if msi_flag:
+        if args.model_arch == 'msi':
             l_r_combinations = combinations(range(0, len(model_list)), 2)
         else:
             model_idx = np.arange(0, len(model_list))
             np.random.shuffle(model_idx)
-
             l_r_combinations = [(model_idx[idx], model_idx[idx + 1]) for idx in range(0, len(model_list), 2)]
 
         for l_mdx, r_mdx in l_r_combinations:
@@ -166,24 +160,16 @@ def train_epoch(train_loader, model_list, optimizer_list, epoch, log):
                 elif l_sample_cons > r_sample_cons:
                     tar_class_logit_list[l_mdx][sdx, ...] = in_cons_logit_list[r_mdx][sdx, ...]
 
-            if args.exclude_unlabeled:
-                l_stabilization_loss = stabilization_weight * stabilization_criterion(cons_logit_list[l_mdx],
-                                                                                      tar_class_logit_list[
-                                                                                          r_mdx]) / minibatch_size
-                r_stabilization_loss = stabilization_weight * stabilization_criterion(cons_logit_list[r_mdx],
-                                                                                      tar_class_logit_list[
-                                                                                          l_mdx]) / minibatch_size
-            else:
-                for sdx in range(unlabeled_minibatch_size, minibatch_size):
-                    tar_class_logit_list[l_mdx][sdx, ...] = in_cons_logit_list[r_mdx][sdx, ...]
-                    tar_class_logit_list[r_mdx][sdx, ...] = in_cons_logit_list[l_mdx][sdx, ...]
+            for sdx in range(unlabeled_minibatch_size, minibatch_size):
+                tar_class_logit_list[l_mdx][sdx, ...] = in_cons_logit_list[r_mdx][sdx, ...]
+                tar_class_logit_list[r_mdx][sdx, ...] = in_cons_logit_list[l_mdx][sdx, ...]
 
-                l_stabilization_loss = stabilization_weight * stabilization_criterion(cons_logit_list[l_mdx],
-                                                                                      tar_class_logit_list[
-                                                                                          r_mdx]) / unlabeled_minibatch_size
-                r_stabilization_loss = stabilization_weight * stabilization_criterion(cons_logit_list[r_mdx],
-                                                                                      tar_class_logit_list[
-                                                                                          l_mdx]) / unlabeled_minibatch_size
+            l_stabilization_loss = stabilization_weight * stabilization_criterion(cons_logit_list[l_mdx],
+                                                                                  tar_class_logit_list[
+                                                                                      r_mdx]) / unlabeled_minibatch_size
+            r_stabilization_loss = stabilization_weight * stabilization_criterion(cons_logit_list[r_mdx],
+                                                                                  tar_class_logit_list[
+                                                                                      l_mdx]) / unlabeled_minibatch_size
 
             meters.update('{0}_stable_loss'.format(l_mdx), l_stabilization_loss.item())
             meters.update('{0}_stable_loss'.format(r_mdx), r_stabilization_loss.item())
@@ -238,7 +224,7 @@ def train_epoch(train_loader, model_list, optimizer_list, epoch, log):
                 **meters.sums()})
 
 
-def main(context):
+def main(context, train_loader, eval_loader):
     global best_prec1
     global global_step
 
@@ -255,7 +241,6 @@ def main(context):
     # create dataloaders
     dataset_config = datasets.__dict__[args.dataset](tnum=args.model_num)
     num_classes = dataset_config.pop('num_classes')
-    train_loader, eval_loader = create_data_loaders(**dataset_config, args=args)
 
     # create models and optimizers
     model_list, optimizer_list = [], []
@@ -271,41 +256,10 @@ def main(context):
         model_list.append(model)
         optimizer_list.append(optimizer)
 
-    # restore saved checkpoint
-    if args.resume:
-        assert os.path.isfile(args.resume), '=> no checkpoint found at: {}'.format(args.resume)
-        LOG.info('=> loading checkpoint: {}'.format(args.resume))
-
-        checkpoint = torch.load(args.resume)
-
-        # globel parameters
-        args.start_epoch = checkpoint['epoch']
-        global_step = checkpoint['global_step']
-        best_prec1 = checkpoint['best_prec1']
-
-        # models and optimizers
-        for mdx, model in enumerate(model_list):
-            model.load_state_dict(checkpoint['{0}_model'.format(mdx)])
-        for mdx, optimizer in enumerate(optimizer_list):
-            optimizer.load_state_dict(checkpoint['{0}_optimizer'.format(mdx)])
-
-        LOG.info('=> loaded checkpoint {} (epoch {})'.format(args.resume, checkpoint['epoch']))
-
     cudnn.benchmark = True
 
-    # validation
-    if args.validation:
-        prec1_list = []
-        for mdx, model in enumerate(model_list):
-            LOG.info('Validating the model-{0}: '.format(mdx))
-            prec1 = validate(eval_loader, model, validate_logs[mdx], global_step, args.start_epoch)
-            prec1_list.append(prec1)
-        best_prec1 = np.max(np.asarray(prec1_list))
-        LOG.info('Best top1 prediction: {0}'.format(best_prec1))
-        return
-
     # training
-    for epoch in range(args.start_epoch, args.epochs):
+    for epoch in range(0, args.epochs):
         start_time = time.time()
 
         train_epoch(train_loader, model_list, optimizer_list, epoch, training_log)
@@ -341,6 +295,8 @@ def main(context):
             mt_func.save_checkpoint(checkpoint_dict, is_best, checkpoint_path, epoch + 1)
 
     LOG.info('Best top1 prediction: {0}'.format(best_prec1))
+
+    return {'accuracy': 1}  # TODO: Complete evaluation
 
 
 if __name__ == '__main__':

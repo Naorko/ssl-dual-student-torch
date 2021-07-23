@@ -15,12 +15,9 @@ import torch
 import torch.backends.cudnn as cudnn
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.datasets
 from torch.autograd import Variable
-from torch.utils.data import DataLoader
-from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 
-from src import datasets, ramps, data, architectures, cli, losses
+from src import datasets, ramps, architectures, cli, losses
 from src.data import NO_LABEL
 from src.mt_func import accuracy
 from src.run_context import RunContext
@@ -33,7 +30,7 @@ best_prec1 = 0
 global_step = 0
 
 
-def main(context):
+def main(context, train_loader, eval_loader):
     global global_step
     global best_prec1
 
@@ -44,16 +41,14 @@ def main(context):
 
     dataset_config = datasets.__dict__[args.dataset]()
     num_classes = dataset_config.pop('num_classes')
-    train_loader, eval_loader = create_data_loaders(**dataset_config, args=args)
 
     def create_model(ema=False):
-        LOG.info("=> creating {pretrained}{ema}model '{arch}'".format(
-            pretrained='pre-trained ' if args.pretrained else '',
+        LOG.info("=> creating {ema}model '{arch}'".format(
             ema='EMA ' if ema else '',
             arch=args.arch))
 
         model_factory = architectures.__dict__[args.arch]
-        model_params = dict(pretrained=args.pretrained, num_classes=num_classes)
+        model_params = dict(num_classes=num_classes)
         model = model_factory(**model_params)
         model = nn.DataParallel(model).cuda()
 
@@ -73,29 +68,9 @@ def main(context):
                                 weight_decay=args.weight_decay,
                                 nesterov=args.nesterov)
 
-    # optionally resume from a checkpoint
-    if args.resume:
-        assert os.path.isfile(args.resume), "=> no checkpoint found at '{}'".format(args.resume)
-        LOG.info("=> loading checkpoint '{}'".format(args.resume))
-        checkpoint = torch.load(args.resume)
-        args.start_epoch = checkpoint['epoch']
-        global_step = checkpoint['global_step']
-        best_prec1 = checkpoint['best_prec1']
-        model.load_state_dict(checkpoint['state_dict'])
-        ema_model.load_state_dict(checkpoint['ema_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        LOG.info("=> loaded checkpoint '{}' (epoch {})".format(args.resume, checkpoint['epoch']))
-
     cudnn.benchmark = True
 
-    if args.evaluate:
-        LOG.info("Evaluating the primary model:")
-        validate(eval_loader, model, validation_log, global_step, args.start_epoch)
-        LOG.info("Evaluating the EMA model:")
-        validate(eval_loader, ema_model, ema_validation_log, global_step, args.start_epoch)
-        return
-
-    for epoch in range(args.start_epoch, args.epochs):
+    for epoch in range(0, args.epochs):
         start_time = time.time()
         # train for one epoch
         train(train_loader, model, ema_model, optimizer, epoch, training_log)
@@ -124,46 +99,7 @@ def main(context):
                 'optimizer': optimizer.state_dict(),
             }, is_best, checkpoint_path, epoch + 1)
 
-
-def create_data_loaders(train_transformation,
-                        eval_transformation,
-                        datadir,
-                        args):
-    traindir = os.path.join(datadir, args.train_subdir)
-    evaldir = os.path.join(datadir, args.eval_subdir)
-
-    assert_exactly_one([args.exclude_unlabeled, args.labeled_batch_size])
-
-    dataset = torchvision.datasets.ImageFolder(traindir, train_transformation)
-
-    if args.labels:
-        with open(args.labels) as f:
-            labels = dict(line.split(' ') for line in f.read().splitlines())
-        labeled_idxs, unlabeled_idxs = data.relabel_dataset(dataset, labels)
-
-    if args.exclude_unlabeled:
-        sampler = SubsetRandomSampler(labeled_idxs)
-        batch_sampler = BatchSampler(sampler, args.batch_size, drop_last=True)
-    elif args.labeled_batch_size:
-        batch_sampler = data.TwoStreamBatchSampler(
-            unlabeled_idxs, labeled_idxs, args.batch_size, args.labeled_batch_size)
-    else:
-        assert False, "labeled batch size {}".format(args.labeled_batch_size)
-
-    train_loader = torch.utils.data.DataLoader(dataset,
-                                               batch_sampler=batch_sampler,
-                                               num_workers=args.workers,
-                                               pin_memory=True)
-
-    eval_loader = torch.utils.data.DataLoader(
-        torchvision.datasets.ImageFolder(evaldir, eval_transformation),
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=2 * args.workers,  # Needs images twice as fast
-        pin_memory=True,
-        drop_last=False)
-
-    return train_loader, eval_loader
+    return {'accuracy': 1}
 
 
 def update_ema_variables(model, ema_model, alpha, global_step):

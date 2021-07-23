@@ -11,6 +11,8 @@ from src import datasets, data
 from src.cli import parse_dict_args, LOG
 from src.run_context import RunContext
 
+args = None
+
 
 def hp_product():
     bs_hp = [32, 64, 128]
@@ -44,7 +46,7 @@ def extract_fold(labeled_dict, unlabeled_dict, fold_idxs):
     return extract_dict(labeled_dict), extract_dict(unlabeled_dict)
 
 
-def create_loader(args, dataset, labeled_idxs, unlabeled_idxs, idxs_in_dict, eval=False):
+def create_loader(dataset, labeled_idxs, unlabeled_idxs, idxs_in_dict, eval=False):
     labeled, unlabeled = extract_fold(labeled_idxs, unlabeled_idxs, idxs_in_dict)
     sampler = data.TwoStreamBatchSampler(
         unlabeled, labeled, args.batch_size, args.labeled_batch_size)
@@ -68,7 +70,7 @@ def create_loader(args, dataset, labeled_idxs, unlabeled_idxs, idxs_in_dict, eva
     return loader
 
 
-def nested_cross_validation(args, outer_k=10, inner_k=3):
+def nested_cross_validation(context, outer_k=10, inner_k=3):
     # create dataloaders
     dataset_config = datasets.__dict__[args.dataset](tnum=args.model_num)
     num_classes = dataset_config.pop('num_classes')
@@ -112,10 +114,10 @@ def nested_cross_validation(args, outer_k=10, inner_k=3):
                 train_idx = [j for i in train_idx for j in inner_fold_split[i]]
                 val_idx = inner_fold_split[val_idx]
 
-                train_loader = create_loader(args, train_dataset, labeled_idxs, unlabeled_idxs, train_idx)
-                val_loader = create_loader(args, eval_dataset, labeled_idxs, unlabeled_idxs, val_idx, eval=True)
+                train_loader = create_loader(train_dataset, labeled_idxs, unlabeled_idxs, train_idx)
+                val_loader = create_loader(eval_dataset, labeled_idxs, unlabeled_idxs, val_idx, eval=True)
 
-                results = execute_model(args, train_loader, val_loader)
+                results = execute_model(args, context, train_loader, val_loader)
                 current_accuracies.append(results['accuracy'])
 
             if np.mean(current_accuracies) > best_acc:
@@ -130,10 +132,10 @@ def nested_cross_validation(args, outer_k=10, inner_k=3):
         args.momentum = momentum_hp
 
         # Run the outer fold
-        train_val_loader = create_loader(args, train_dataset, labeled_idxs, unlabeled_idxs, train_val_idx)
-        test_loader = create_loader(args, eval_dataset, labeled_idxs, unlabeled_idxs, [test_idx], eval=True)
+        train_val_loader = create_loader(train_dataset, labeled_idxs, unlabeled_idxs, train_val_idx)
+        test_loader = create_loader(eval_dataset, labeled_idxs, unlabeled_idxs, [test_idx], eval=True)
 
-        results = execute_model(args, train_val_loader, test_loader)
+        results = execute_model(args, context, train_val_loader, test_loader)
 
 
 def defaults(arch):
@@ -146,7 +148,6 @@ def defaults(arch):
 
         # Technical Details
         'workers': 2,
-        'checkpoint_epochs': 20,
 
         # optimization
         'batch-size': 100,
@@ -173,12 +174,18 @@ def defaults(arch):
 
         'title': 'ms_cifar10_1000l_cnn13',
         'n_labels': 1000,
-        'epochs': 1  # 300, TODO: More epochs?
+        'epochs': 1,  # 300, TODO: More epochs?
+
+        # debug
+        'print_freq': 1,
+        'validation_epochs': 1,
+        'checkpoint_epochs': 1
     }
     return args
 
 
 def run(title, n_labels, **kwargs):
+    global args
     LOG.info('run title: %s', title)
 
     context = RunContext(__file__, "{}".format(n_labels))
@@ -187,7 +194,7 @@ def run(title, n_labels, **kwargs):
     LOG.addHandler(fh)
 
     args = parse_dict_args(**kwargs)
-    nested_cross_validation(args)
+    nested_cross_validation(context)
 
 
 if __name__ == '__main__':

@@ -1,5 +1,4 @@
 import logging
-import os
 import time
 
 import numpy as np
@@ -7,12 +6,9 @@ import torch
 import torch.backends.cudnn as cudnn
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.datasets
 from torch.autograd import Variable
-from torch.utils.data import DataLoader, ConcatDataset
-from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 
-from src import architectures, ramps, cli, datasets, data, mt_func, run_context, losses
+from src import architectures, ramps, cli, datasets, mt_func, run_context, losses
 from src.data import NO_LABEL
 from src.utils import *
 
@@ -23,80 +19,13 @@ best_prec1 = 0
 global_step = 0
 
 
-def create_data_loaders(train_transformation, eval_transformation, datadir, args):
-    traindir = os.path.join(datadir, args.train_subdir)
-    evaldir = os.path.join(datadir, args.eval_subdir)
-    assert_exactly_one([args.exclude_unlabeled, args.labeled_batch_size])
-
-    dataset = torchvision.datasets.ImageFolder(traindir, train_transformation)
-    ds_size = len(dataset.imgs)
-
-    if args.labels:
-        with open(args.labels) as f:
-            labels = dict(line.split(' ') for line in f.read().splitlines())
-        labeled_idxs, unlabeled_idxs = data.relabel_dataset(dataset, labels)
-
-    if args.exclude_unlabeled:
-        sampler = SubsetRandomSampler(labeled_idxs)
-        batch_sampler = BatchSampler(sampler, args.batch_size, drop_last=True)
-    elif args.labeled_batch_size:
-
-        # domain adaptation dataset
-        if args.target_domain is not None:
-            LOG.info('\nYou set target domain: {0} on script.\n'
-                     'This is a domain adaptation experiment.\n'.format(args.target_domain))
-
-            target_dataset_config = datasets.__dict__[args.target_domain]()
-
-            if args.target_domain == 'mnist':
-                valid_sources = ['usps']
-                if not args.dataset in valid_sources:
-                    LOG.error('\nYou set \'mnist\' as the target domain. \n'
-                              'However, you use the source domain: \'{0}\'.\n'
-                              'The source domain should be \'{1}\''.format(args.dataset, valid_sources))
-                target_traindir = '{0}/train'.format(target_dataset_config['datadir'])
-                evaldir = '{0}/test'.format(target_dataset_config['datadir'])
-                eval_transformation = target_dataset_config['eval_transformation']
-            else:
-                LOG.error('Unsupport target domain: {0}.\n'.format(args.target_domain))
-
-            target_dataset = torchvision.datasets.ImageFolder(target_traindir,
-                                                              target_dataset_config['train_transformation'])
-            target_labeled_idxs, target_unlabeled_idxs = data.relabel_dataset(target_dataset, {})
-
-            dataset = ConcatDataset([dataset, target_dataset])
-            unlabeled_idxs += [ds_size + i for i in range(0, len(target_dataset.imgs))]
-
-        batch_sampler = data.TwoStreamBatchSampler(
-            unlabeled_idxs, labeled_idxs, args.batch_size, args.labeled_batch_size)
-    else:
-        assert False, "labeled batch size {}".format(args.labeled_batch_size)
-
-    train_loader = torch.utils.data.DataLoader(
-        dataset,
-        batch_sampler=batch_sampler,
-        num_workers=args.workers,
-        pin_memory=True)
-
-    eval_loader = torch.utils.data.DataLoader(
-        torchvision.datasets.ImageFolder(evaldir, eval_transformation),
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.workers,
-        pin_memory=True,
-        drop_last=False)
-
-    return train_loader, eval_loader
-
-
 def create_model(name, num_classes, ema=False):
-    LOG.info('=> creating {pretrained} {name} model: {arch}'.format(
-        pretrained='pre-trained' if args.pretrained else 'non-pre-trained',
+    LOG.info('=> creating {name} model: {arch}'.format(
         name=name,
         arch=args.arch))
 
     model_factory = architectures.__dict__[args.arch]
-    model_params = dict(pretrained=args.pretrained, num_classes=num_classes)
+    model_params = dict(num_classes=num_classes)
     model = model_factory(**model_params)
     model = nn.DataParallel(model).cuda()
 
@@ -107,7 +36,6 @@ def create_model(name, num_classes, ema=False):
 
 
 def adjust_learning_rate(optimizer, epoch, step_in_epoch, total_steps_in_epoch):
-    lr = args.lr
     epoch = epoch + step_in_epoch / total_steps_in_epoch
 
     # LR warm-up to handle large minibatch sizes from https://arxiv.org/abs/1706.02677
@@ -344,30 +272,23 @@ def train_epoch(train_loader, l_model, r_model, l_optimizer, r_optimizer, epoch,
 
         # calculate stablization weight
         stabilization_weight = args.stabilization_scale * ramps.sigmoid_rampup(epoch, args.stabilization_rampup)
-        if not args.exclude_unlabeled:
-            stabilization_weight = (unlabeled_minibatch_size / minibatch_size) * stabilization_weight
+        stabilization_weight = (unlabeled_minibatch_size / minibatch_size) * stabilization_weight
 
         # stabilization loss for r model
-        if args.exclude_unlabeled:
-            r_stabilization_loss = stabilization_weight * stabilization_criterion(r_cons_logit,
-                                                                                  tar_l_class_logit) / minibatch_size
-        else:
-            for idx in range(unlabeled_minibatch_size, minibatch_size):
-                tar_l_class_logit[idx, ...] = in_r_cons_logit[idx, ...]
-            r_stabilization_loss = stabilization_weight * stabilization_criterion(r_cons_logit,
-                                                                                  tar_l_class_logit) / unlabeled_minibatch_size
+        for idx in range(unlabeled_minibatch_size, minibatch_size):
+            tar_l_class_logit[idx, ...] = in_r_cons_logit[idx, ...]
+
+        r_stabilization_loss = stabilization_weight * stabilization_criterion(r_cons_logit,
+                                                                              tar_l_class_logit) / unlabeled_minibatch_size
         meters.update('r_stable_loss', r_stabilization_loss.item())
         r_loss += r_stabilization_loss
 
         # stabilization loss for l model
-        if args.exclude_unlabeled:
-            l_stabilization_loss = stabilization_weight * stabilization_criterion(l_cons_logit,
-                                                                                  tar_r_class_logit) / minibatch_size
-        else:
-            for idx in range(unlabeled_minibatch_size, minibatch_size):
-                tar_r_class_logit[idx, ...] = in_l_cons_logit[idx, ...]
-            l_stabilization_loss = stabilization_weight * stabilization_criterion(l_cons_logit,
-                                                                                  tar_r_class_logit) / unlabeled_minibatch_size
+        for idx in range(unlabeled_minibatch_size, minibatch_size):
+            tar_r_class_logit[idx, ...] = in_l_cons_logit[idx, ...]
+
+        l_stabilization_loss = stabilization_weight * stabilization_criterion(l_cons_logit,
+                                                                              tar_r_class_logit) / unlabeled_minibatch_size
 
         meters.update('l_stable_loss', l_stabilization_loss.item())
         l_loss += l_stabilization_loss
@@ -459,38 +380,10 @@ def main(context):
                                   weight_decay=args.weight_decay,
                                   nesterov=args.nesterov)
 
-    # restore saved checkpoint
-    if args.resume:
-        assert os.path.isfile(args.resume), '=> no checkpoint found at: {}'.format(args.resume)
-        LOG.info('=> loading checkpoint: {}'.format(args.resume))
-
-        checkpoint = torch.load(args.resume)
-
-        # globel parameters
-        args.start_epoch = checkpoint['epoch']
-        global_step = checkpoint['global_step']
-        best_prec1 = checkpoint['best_prec1']
-
-        # models and optimizers
-        l_model.load_state_dict(checkpoint['l_model'])
-        r_model.load_state_dict(checkpoint['r_model'])
-        l_optimizer.load_state_dict(checkpoint['l_optimizer'])
-        r_optimizer.load_state_dict(checkpoint['r_optimizer'])
-
-        LOG.info('=> loaded checkpoint {} (epoch {})'.format(args.resume, checkpoint['epoch']))
-
     cudnn.benchmark = True
 
-    # validation
-    if args.validation:
-        LOG.info('Validating the left model: ')
-        validate(eval_loader, l_model, l_validation_log, global_step, args.start_epoch)
-        LOG.info('Validating the right model: ')
-        validate(eval_loader, r_model, r_validation_log, global_step, args.start_epoch)
-        return
-
     # training
-    for epoch in range(args.start_epoch, args.epochs):
+    for epoch in range(0, args.epochs):
         start_time = time.time()
 
         train_epoch(train_loader, l_model, r_model, l_optimizer, r_optimizer, epoch, training_log)
