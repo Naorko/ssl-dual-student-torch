@@ -1,9 +1,23 @@
+import logging
 import random
+from itertools import product
 
 import torchvision
 from torch.utils.data import DataLoader
 
 from src import datasets, data
+from src.cli import parse_dict_args, LOG
+from src.run_context import RunContext
+
+
+def hp_product():
+    bs_hp = [32, 64, 128]
+    n_labels_ratio_hp = [0.5, 0.4, 0.25, 0.1]
+    wd_hp = [0, 1e-2, 1e-3, 1e-4]
+    momentum_hp = [0.3, 0.5, 0.8, 0.9]
+    hp_product_lst = list(product(bs_hp, n_labels_ratio_hp, wd_hp, momentum_hp))
+
+    return hp_product_lst
 
 
 def partition(list_in, n):
@@ -106,14 +120,60 @@ def nested_cross_validation(args, outer_k=10, inner_k=3):
         results = execute_model(args, train_val_loader, test_loader)
 
 
+def defaults(arch):
+    args = {
+        'model-arch': arch,
 
-args = {'dataset': 'cifar100', 'model_num': 2,
+        # data
+        'dataset': 'cifar100',
         'labels': '/home/naorko/DL/ssl-dual-student-torch/third_party/data-local/labels/cifar100/10000_balanced_labels/00.txt',
-        'batch_size': 100,
-        'labeled_batch_size': 50,
-        'workers': 2,
-        }
-from src.cli import parse_dict_args
 
-args = parse_dict_args(**args)
-nested_cross_validation(args)
+        # Technical Details
+        'workers': 2,
+        'checkpoint_epochs': 20,
+
+        # optimization
+        'batch-size': 100,
+        'labeled-batch-size': 50,
+
+        # optimizer
+        'lr': 0.1,
+        'nesterov': True,
+        'weight-decay': 0,
+        'momentum': 0.9,
+
+        # architecture
+        'arch': 'cnn13',
+        'model_num': 2,
+
+        # constraint
+        'consistency_scale': 10.0,
+        'consistency_rampup': 5,
+        'stable_threshold': 0.8,
+        'stabilization_scale': 100.0,
+        'stabilization_rampup': 5,
+        'logit_distance_cost': 0.01,
+        'consistency': 100.0,  # mt-only
+
+        'title': 'ms_cifar10_1000l_cnn13',
+        'n_labels': 1000,
+        'epochs': 1  # 300, TODO: More epochs?
+    }
+    return args
+
+
+def run(title, n_labels, **kwargs):
+    LOG.info('run title: %s', title)
+
+    context = RunContext(__file__, "{}".format(n_labels))
+    fh = logging.FileHandler('{0}/log.txt'.format(context.result_dir))
+    fh.setLevel(logging.INFO)
+    LOG.addHandler(fh)
+
+    args = parse_dict_args(**kwargs)
+    nested_cross_validation(args)
+
+
+if __name__ == '__main__':
+    args = defaults('ms')
+    run(**args)

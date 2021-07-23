@@ -52,7 +52,7 @@ def parameters():
     for data_seed in range(10, 11):
         yield {
             **defaults,
-            'title': 'ms_cifar10_1000l_cnn13',
+            'title': 'ms_cifarF10_1000l_cnn13',
             'n_labels': 1000,
             'data_seed': data_seed,
             'epochs': 1,  # 300, TODO: More epochs?

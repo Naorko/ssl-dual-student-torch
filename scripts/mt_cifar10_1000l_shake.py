@@ -12,7 +12,7 @@ import logging
 import torch
 
 import mean_teacher_baseline
-from src.mt_cli import parse_dict_args
+from src.cli import parse_dict_args
 from src.run_context import RunContext
 
 LOG = logging.getLogger('runner')

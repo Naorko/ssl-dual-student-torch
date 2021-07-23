@@ -20,7 +20,7 @@ from torch.autograd import Variable
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 
-from src import datasets, ramps, data, mt_architectures, mt_cli, losses
+from src import datasets, ramps, data, architectures, cli, losses
 from src.data import NO_LABEL
 from src.mt_func import accuracy
 from src.run_context import RunContext
@@ -52,7 +52,7 @@ def main(context):
             ema='EMA ' if ema else '',
             arch=args.arch))
 
-        model_factory = mt_architectures.__dict__[args.arch]
+        model_factory = architectures.__dict__[args.arch]
         model_params = dict(pretrained=args.pretrained, num_classes=num_classes)
         model = model_factory(**model_params)
         model = nn.DataParallel(model).cuda()
@@ -177,12 +177,7 @@ def train(train_loader, model, ema_model, optimizer, epoch, log):
     global global_step
 
     class_criterion = nn.CrossEntropyLoss(size_average=False, ignore_index=NO_LABEL).cuda()
-    if args.consistency_type == 'mse':
-        consistency_criterion = losses.softmax_mse_loss
-    elif args.consistency_type == 'kl':
-        consistency_criterion = losses.softmax_kl_loss
-    else:
-        assert False, args.consistency_type
+    consistency_criterion = losses.softmax_mse_loss
     residual_logit_criterion = losses.symmetric_mse_loss
 
     meters = AverageMeterSet()
@@ -388,5 +383,5 @@ def get_current_consistency_weight(epoch):
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
-    args = mt_cli.parse_commandline_args()
+    args = cli.parser_commandline_args()
     main(RunContext(__file__, 0))

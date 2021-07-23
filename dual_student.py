@@ -180,12 +180,9 @@ def train_epoch(train_loader, l_model, r_model, l_optimizer, r_optimizer, epoch,
     # define criterions
     class_criterion = nn.CrossEntropyLoss(size_average=False, ignore_index=NO_LABEL).cuda()
     residual_logit_criterion = losses.symmetric_mse_loss
-    if args.consistency_type == 'mse':
-        consistency_criterion = losses.softmax_mse_loss
-        stabilization_criterion = losses.softmax_mse_loss
-    elif args.consistency_type == 'kl':
-        consistency_criterion = losses.softmax_kl_loss
-        stabilization_criterion = losses.softmax_kl_loss
+
+    consistency_criterion = losses.softmax_mse_loss
+    stabilization_criterion = losses.softmax_mse_loss
 
     l_model.train()
     r_model.train()

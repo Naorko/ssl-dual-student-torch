@@ -2,7 +2,7 @@ import argparse
 import logging
 import re
 
-from src import architectures, mt_cli as mt_cli
+from src import architectures
 from src import datasets
 
 LOG = logging.getLogger('main')
@@ -11,35 +11,25 @@ LOG = logging.getLogger('main')
 def create_parser():
     parser = argparse.ArgumentParser(description='Dual Student SSL PyTorch Version')
 
-    # global
-    parser.add_argument('--resume', default='', type=str, metavar='PATH',
-                        help='path of the resume checkpoint (default: '')')
-    parser.add_argument('--validation', type=str2bool,
-                        help='only validate the model on eval-subdir')
-    parser.add_argument('--pretrained', dest='pretrained', action='store_true',
-                        help='use pretrained model (this argument is not used any more)')
+    # chosen architecture
+    parser.add_argument('--model-arch', default='ms', type=str, choices=['ms', 'msi', 'mt'],
+                        help='The chosen Model (ms | msi | mt)', metavar='ARCH')
 
     # data
     parser.add_argument('--dataset', metavar='DATASET', default='cifar10', choices=datasets.__all__,
                         help='dataset: ' + ' | '.join(datasets.__all__) + ' (default: cifar10)')
-    parser.add_argument('--train-subdir', type=str, default='train',
-                        help='the subdirectory inside the data directory that contains the training data')
-    parser.add_argument('--eval-subdir', type=str, default='val',
-                        help='the subdirectory inside the data directory that contains the evaluation data')
+
+
     parser.add_argument('--workers', default=4, type=int, metavar='N',
                         help='number of data loading workers (default: 4)')
     parser.add_argument('--labels', default=None, type=str, metavar='FILE',
                         help='list of image labels (default: based on directory structure)')
-    parser.add_argument('--target-domain', default=None, type=str,
-                        help='target unlabeled domain for domain adaptation experiments if not None')
 
     # optimization
     parser.add_argument('--batch-size', default=100, type=int,
                         metavar='N', help='mini-batch size (default: 100)')
     parser.add_argument('--labeled-batch-size', default=None, type=int,
                         metavar='N', help="labeled examples per minibatch (default: no constrain)")
-    parser.add_argument('--exclude-unlabeled', default=False, type=str2bool, metavar='BOOL',
-                        help='exclude unlabeled examples from the training set')
 
     parser.add_argument('--lr', default=0.1, type=float,
                         metavar='LR', help='max learning rate')
@@ -56,8 +46,7 @@ def create_parser():
 
     parser.add_argument('--epochs', default=300, type=int, metavar='N',
                         help='number of total epochs to run')
-    parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
-                        help='manual epoch number (useful on restarts)')
+
     parser.add_argument('--checkpoint-epochs', default=1, type=int,
                         metavar='EPOCHS',
                         help='checkpoint frequency in epochs, 0 to turn checkpointing off (default: 1)')
@@ -71,12 +60,13 @@ def create_parser():
                         help='model architecture: ' + ' | '.join(architectures.__all__))
 
     # constraint
-    parser.add_argument('--consistency-type', default="mse", type=str, metavar='TYPE', choices=['mse', 'kl'],
-                        help='consistency loss type to use')
+
     parser.add_argument('--consistency-scale', default=None, type=float, metavar='WEIGHT',
                         help='use consistency loss with given weight (default: None)')
     parser.add_argument('--consistency-rampup', default=30, type=int, metavar='EPOCHS',
                         help='length of the consistency loss ramp-up')
+    parser.add_argument('--consistency', default=100.0, type=float, metavar='CONSISTENCY',
+                        help='consistency')
 
     parser.add_argument('--stable-threshold', default=0.0, type=float, metavar='THRESHOLD',
                         help='threshold for stable sample')
@@ -88,6 +78,8 @@ def create_parser():
     parser.add_argument('--logit-distance-cost', default=-1, type=float, metavar='WEIGHT',
                         help='let the student model have two outputs and use an MSE loss　between '
                              'the logits with the given weight (default: only have one output)')
+    parser.add_argument('--ema-decay', default=0.97, type=float, metavar='ALPHA',
+                        help='ema variable decay rate (default: 0.97)') # MT- ONLY!
 
     # for Multiple Student
     parser.add_argument('--model-num', default=2, type=int, metavar='MS',
@@ -120,8 +112,24 @@ def parse_dict_args(**kwargs):
 
 
 def str2bool(v):
-    return mt_cli.str2bool(v)
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
 
 
 def str2epochs(v):
-    return mt_cli.str2epochs(v)
+    try:
+        if len(v) == 0:
+            epochs = []
+        else:
+            epochs = [int(string) for string in v.split(",")]
+    except:
+        raise argparse.ArgumentTypeError(
+            'Expected comma-separated list of integers, got "{}"'.format(v))
+    if not all(0 < epoch1 < epoch2 for epoch1, epoch2 in zip(epochs[:-1], epochs[1:])):
+        raise argparse.ArgumentTypeError(
+            'Expected the epochs to be listed in increasing order')
+    return epochs
