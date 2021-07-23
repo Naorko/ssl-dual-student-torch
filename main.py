@@ -2,9 +2,11 @@ import logging
 import random
 from itertools import product
 
+import numpy as np
 import torchvision
 from torch.utils.data import DataLoader
 
+from model_executor import execute_model
 from src import datasets, data
 from src.cli import parse_dict_args, LOG
 from src.run_context import RunContext
@@ -66,10 +68,6 @@ def create_loader(args, dataset, labeled_idxs, unlabeled_idxs, idxs_in_dict, eva
     return loader
 
 
-def execute_model(args, train_loader, val_loader):
-    return None, None
-
-
 def nested_cross_validation(args, outer_k=10, inner_k=3):
     # create dataloaders
     dataset_config = datasets.__dict__[args.dataset](tnum=args.model_num)
@@ -94,26 +92,44 @@ def nested_cross_validation(args, outer_k=10, inner_k=3):
 
         inner_fold_split = partition(train_val_idx, inner_k)
 
+        # Initialize best results
+        best_acc = 0
+        best_params = (0, 0, 0, 0)
         # select 50 random params
-        # for p in params do
-        # update args
-        # results = []
-        for val_idx in range(inner_k):
-            train_idx = [i for i in range(inner_k) if i != val_idx]
+        hp_params = random.sample(hp_product(), 50)
+        for bs_hp, n_labels_ratio_hp, wd_hp, momentum_hp in hp_params:
+            # update args
+            args.batch_size = bs_hp
+            args.labeled_batch_size = int(bs_hp * n_labels_ratio_hp)
+            args.weight_decay = wd_hp
+            args.momentum = momentum_hp
 
-            train_idx = [j for i in train_idx for j in inner_fold_split[i]]
-            val_idx = inner_fold_split[val_idx]
+            # Run the inner fold
+            current_accuracies = []
+            for val_idx in range(inner_k):
+                train_idx = [i for i in range(inner_k) if i != val_idx]
 
-            train_loader = create_loader(args, train_dataset, labeled_idxs, unlabeled_idxs, train_idx)
-            val_loader = create_loader(args, eval_dataset, labeled_idxs, unlabeled_idxs, val_idx, eval=True)
+                train_idx = [j for i in train_idx for j in inner_fold_split[i]]
+                val_idx = inner_fold_split[val_idx]
 
-            # results.append(results)
-            results = execute_model(args, train_loader, val_loader)
+                train_loader = create_loader(args, train_dataset, labeled_idxs, unlabeled_idxs, train_idx)
+                val_loader = create_loader(args, eval_dataset, labeled_idxs, unlabeled_idxs, val_idx, eval=True)
 
-        # end for
-        # select params[i] for i=argmax(results)
-        # update args
+                results = execute_model(args, train_loader, val_loader)
+                current_accuracies.append(results['accuracy'])
 
+            if np.mean(current_accuracies) > best_acc:
+                best_acc = np.mean(current_accuracies)
+                best_params = bs_hp, n_labels_ratio_hp, wd_hp, momentum_hp
+
+        # update args by best params
+        bs_hp, n_labels_ratio_hp, wd_hp, momentum_hp = best_params
+        args.batch_size = bs_hp
+        args.labeled_batch_size = int(bs_hp * n_labels_ratio_hp)
+        args.weight_decay = wd_hp
+        args.momentum = momentum_hp
+
+        # Run the outer fold
         train_val_loader = create_loader(args, train_dataset, labeled_idxs, unlabeled_idxs, train_val_idx)
         test_loader = create_loader(args, eval_dataset, labeled_idxs, unlabeled_idxs, [test_idx], eval=True)
 
@@ -126,7 +142,7 @@ def defaults(arch):
 
         # data
         'dataset': 'cifar100',
-        'labels': '/home/naorko/DL/ssl-dual-student-torch/third_party/data-local/labels/cifar100/10000_balanced_labels/00.txt',
+        'labels': '/home/naorko/DL/ssl-dual-student-torch/data-local/labels/cifar100/10000_balanced_labels/00.txt',
 
         # Technical Details
         'workers': 2,
