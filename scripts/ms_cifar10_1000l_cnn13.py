@@ -68,6 +68,7 @@ def run(title, base_batch_size, base_labeled_batch_size, base_lr, n_labels, data
         'labeled_batch_size': base_labeled_batch_size * ngpu,
         'lr': base_lr * ngpu,
         'labels': 'third_party/data-local/labels/cifar10/{}_balanced_labels/{:02d}.txt'.format(n_labels, data_seed),
+        'model_arch': 'ms'
     }
     context = RunContext(__file__, "{}_{}".format(n_labels, data_seed))
     fh = logging.FileHandler('{0}/log.txt'.format(context.result_dir))

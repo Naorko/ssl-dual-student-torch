@@ -1,6 +1,7 @@
 import logging
 import os
 import time
+from itertools import combinations
 
 import numpy as np
 import torch
@@ -24,6 +25,8 @@ global_step = 0
 
 def train_epoch(train_loader, model_list, optimizer_list, epoch, log):
     global global_step
+
+    msi_flag = args.model_arch == 'msi'
 
     meters = AverageMeterSet()
 
@@ -120,16 +123,15 @@ def train_epoch(train_loader, model_list, optimizer_list, epoch, log):
         if not args.exclude_unlabeled:
             stabilization_weight = (unlabeled_minibatch_size / minibatch_size) * stabilization_weight
 
-        model_idx = np.arange(0, len(model_list))
-        np.random.shuffle(model_idx)
+        if msi_flag:
+            l_r_combinations = combinations(range(0, len(model_list)), 2)
+        else:
+            model_idx = np.arange(0, len(model_list))
+            np.random.shuffle(model_idx)
 
-        for idx in range(0, len(model_idx)):
-            if idx % 2 != 0:
-                continue
+            l_r_combinations = [(model_idx[idx], model_idx[idx + 1]) for idx in range(0, len(model_list), 2)]
 
-            # l and r construct Dual Student
-            l_mdx, r_mdx = model_idx[idx], model_idx[idx + 1]
-
+        for l_mdx, r_mdx in l_r_combinations:
             for sdx in range(0, minibatch_size):
                 l_stable = False
                 # unstable: do not satisfy the 2nd condition
