@@ -24,7 +24,7 @@ def cifar100(tnum=2):
     return {
         'train_transformation': train_transformation,
         'eval_transformation': eval_transformation,
-        'datadir': 'third_party/data-local/images/cifar100',
+        'datadir': 'data-local/images/cifar100',
         'num_classes': 100
     }
 
@@ -46,7 +46,7 @@ def mnist(tnum=2):
     return {
         'train_transformation': train_transformation,
         'eval_transformation': eval_transformation,
-        'datadir': 'third_party/data-local/images/mnist',
+        'datadir': 'data-local/images/mnist',
         'num_classes': 10,
     }
 
@@ -71,6 +71,30 @@ def cinic10(tnum=2):
     return {
         'train_transformation': train_transformation,
         'eval_transformation': eval_transformation,
-        'datadir': 'third_party/data-local/images/cinic10',
+        'datadir': 'data-local/images/cinic10',
         'num_classes': 10
+    }
+
+@export
+def cub200(tnum=2):
+    channel_stats = dict(mean=[0.5, 0.5, 0.5],
+                         std=[0.5, 0.5, 0.5])
+    train_transformation = data.TransformNTimes(
+        transforms.Compose([
+            data.RandomTranslateWithReflect(4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(**channel_stats)
+        ]), n=tnum)
+
+    eval_transformation = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(**channel_stats)
+    ])
+
+    return {
+        'train_transformation': train_transformation,
+        'eval_transformation': eval_transformation,
+        'datadir': 'data-local/images/cub200',
+        'num_classes': 200
     }
