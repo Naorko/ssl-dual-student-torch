@@ -16,12 +16,12 @@ from pandas import DataFrame
 
 
 class TrainLog:
-    """Saves training logs in Pandas msgpacks"""
+    """Saves training logs in Pandas csvs"""
 
     INCREMENTAL_UPDATE_TIME = 300
 
     def __init__(self, directory, name):
-        self.log_file_path = "{}/{}.msgpack".format(directory, name)
+        self.log_file_path = "{}/{}.csv".format(directory, name)
         self._log = defaultdict(dict)
         self._log_lock = threading.RLock()
         self._last_update_time = time.time() - self.INCREMENTAL_UPDATE_TIME
@@ -51,10 +51,10 @@ class TrainLog:
 class RunContext:
     """Creates directories and files for the run"""
 
-    def __init__(self, runner_file, run_idx):
+    def __init__(self, runner_file, run_idx=''):
         logging.basicConfig(level=logging.INFO, format='%(message)s')
         runner_name = os.path.basename(runner_file).split(".")[0]
-        self.result_dir = "{root}/{runner_name}/{Y}_{m}_{d}_{H}_{M}_{S}/{run_idx}".format(
+        self.result_dir = "{root}/{runner_name}/{Y}_{m:02}_{d:02}_{H:02}_{M:02}_{S:02}".format(
             root='results',
             runner_name=runner_name,
             Y=datetime.now().year,

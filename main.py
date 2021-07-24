@@ -3,6 +3,7 @@ import random
 from itertools import product
 
 import numpy as np
+import torch
 import torchvision
 from torch.utils.data import DataLoader, Subset
 
@@ -191,6 +192,9 @@ def defaults(arch, dataset, n_labels, net_arch='cnn13'):
 def run(title, n_labels, **kwargs):
     global args
     LOG.info('run title: %s', title)
+
+    ngpu = torch.cuda.device_count()
+    assert ngpu > 0, "Expecting at least one GPU, found none."
 
     context = RunContext(title, "{}".format(n_labels))
     fh = logging.FileHandler('{0}/log.txt'.format(context.result_dir))
