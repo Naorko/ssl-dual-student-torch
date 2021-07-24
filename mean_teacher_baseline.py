@@ -14,11 +14,10 @@ import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
 import torch.nn as nn
-import torch.nn.functional as F
-from sklearn.metrics import confusion_matrix
 from torch.autograd import Variable
 
-from src import datasets, ramps, architectures, cli, losses
+from dual_student import validate, create_model
+from src import datasets, ramps, cli, losses
 from src.data import NO_LABEL
 from src.mt_func import accuracy
 from src.run_context import RunContext
@@ -43,24 +42,8 @@ def main(context, train_loader, eval_loader):
     dataset_config = datasets.__dict__[args.dataset]()
     num_classes = dataset_config.pop('num_classes')
 
-    def create_model(ema=False):
-        LOG.info("=> creating {ema}model '{arch}'".format(
-            ema='EMA ' if ema else '',
-            arch=args.arch))
-
-        model_factory = architectures.__dict__[args.arch]
-        model_params = dict(num_classes=num_classes)
-        model = model_factory(**model_params)
-        model = nn.DataParallel(model).cuda()
-
-        if ema:
-            for param in model.parameters():
-                param.detach_()
-
-        return model
-
-    model = create_model()
-    ema_model = create_model(ema=True)
+    model = create_model('primary model', num_classes)
+    ema_model = create_model('EMA model', num_classes, ema=True)
 
     LOG.info(parameters_string(model))
 
@@ -71,36 +54,30 @@ def main(context, train_loader, eval_loader):
 
     cudnn.benchmark = True
 
+    start_train = time.time()
     for epoch in range(0, args.epochs):
         start_time = time.time()
         # train for one epoch
         train(train_loader, model, ema_model, optimizer, epoch, training_log)
         LOG.info("--- training epoch in %s seconds ---" % (time.time() - start_time))
 
-        if args.validation_epochs and (epoch + 1) % args.validation_epochs == 0:
-            start_time = time.time()
-            LOG.info("Evaluating the primary model:")
-            prec1 = validate(eval_loader, model, validation_log, global_step, epoch + 1)
-            LOG.info("Evaluating the EMA model:")
-            ema_prec1 = validate(eval_loader, ema_model, ema_validation_log, global_step, epoch + 1)
-            LOG.info("--- validation in %s seconds ---" % (time.time() - start_time))
-            is_best = ema_prec1 > best_prec1
-            best_prec1 = max(ema_prec1, best_prec1)
-        else:
-            is_best = False
+    end_train = time.time()
 
-        if args.checkpoint_epochs and (epoch + 1) % args.checkpoint_epochs == 0:
-            save_checkpoint({
-                'epoch': epoch + 1,
-                'global_step': global_step,
-                'arch': args.arch,
-                'state_dict': model.state_dict(),
-                'ema_state_dict': ema_model.state_dict(),
-                'best_prec1': best_prec1,
-                'optimizer': optimizer.state_dict(),
-            }, is_best, checkpoint_path, epoch + 1)
+    start_time = time.time()
+    LOG.info("Evaluating the primary model:")
+    meters = validate(eval_loader, model, validation_log)
+    LOG.info("Evaluating the EMA model:")
+    ema_meters = validate(eval_loader, ema_model, ema_validation_log)
+    LOG.info("--- validation in %s seconds ---" % (time.time() - start_time))
 
-    return {'accuracy': 1}
+    if ema_meters['top1'] > meters['top1']:
+        best_model_meters = ema_meters
+    else:
+        best_model_meters = meters
+
+    best_model_meters.update('Training time per epoch', (end_train - start_train) / args.epochs)
+
+    return best_model_meters
 
 
 def update_ema_variables(model, ema_model, alpha, global_step):
@@ -224,85 +201,7 @@ def train(train_loader, model, ema_model, optimizer, epoch, log):
                 **meters.averages(),
                 **meters.sums()
             })
-
-
-def validate(eval_loader, model, log, global_step, epoch):
-    class_criterion = nn.CrossEntropyLoss(size_average=False, ignore_index=NO_LABEL).cuda()
-    meters = AverageMeterSet()
-    # switch to evaluate mode
-    model.eval()
-
-    end = time.time()
-    for i, (input, target) in enumerate(eval_loader):
-        meters.update('data_time', time.time() - end)
-
-        input_var = torch.autograd.Variable(input, volatile=True)
-        target_var = torch.autograd.Variable(target.cuda(non_blocking=True), volatile=True)
-
-        minibatch_size = len(target_var)
-        labeled_minibatch_size = target_var.data.ne(NO_LABEL).sum().item()
-        assert labeled_minibatch_size > 0
-        meters.update('labeled_minibatch_size', labeled_minibatch_size)
-
-        # compute output and update inference time
-        inf_start = time.time()
-        output1, output2 = model(input_var)
-        inf_time = time.time() - inf_start
-        meters.update('inference_time', inf_time, n=labeled_minibatch_size)
-
-        # update TPR, FPR and percison (using cnf matrix)
-        softmax1, softmax2 = F.softmax(output1, dim=1), F.softmax(output2, dim=1)
-        cnf_matrix = confusion_matrix(target_var.cpu().detach().numpy(),
-                                      torch.argmax(output1, dim=0).cpu().detach().numpy())
-        FP = cnf_matrix.sum(axis=0) - np.diag(cnf_matrix)
-        FN = cnf_matrix.sum(axis=1) - np.diag(cnf_matrix)
-        TP = np.diag(cnf_matrix)
-        TN = cnf_matrix.sum() - (FP + FN + TP)
-        FP, FN, TP, TN = FP.sum(), FN.sum(), TP.sum(), TN.sum()
-
-        TPR = TP / (TP + FN)
-        FPR = FP / (FP + TN)
-        Precision = TP / (TP + FP)
-        meters.update('TPR', TPR, n=labeled_minibatch_size)
-        meters.update('FPR', FPR, n=labeled_minibatch_size)
-        meters.update('Precision', Precision, n=labeled_minibatch_size)
-
-        class_loss = class_criterion(output1, target_var) / minibatch_size
-
-        # measure accuracy and record loss
-        prec1, prec5 = accuracy(output1.data, target_var.data, topk=(1, 5))
-        prec1, prec5 = prec1.item(), prec5.item()
-
-        meters.update('class_loss', class_loss.item(), labeled_minibatch_size)
-        meters.update('top1', prec1, labeled_minibatch_size)
-        meters.update('error1', 100.0 - prec1, labeled_minibatch_size)
-        meters.update('top5', prec5, labeled_minibatch_size)
-        meters.update('error5', 100.0 - prec5, labeled_minibatch_size)
-
-        # measure elapsed time
-        meters.update('batch_time', time.time() - end)
-        end = time.time()
-
-        if i % args.print_freq == 0:
-            LOG.info(
-                'Test: [{0}/{1}]\t'
-                'Time {meters[batch_time]:.3f}\t'
-                'Data {meters[data_time]:.3f}\t'
-                'Class {meters[class_loss]:.4f}\t'
-                'Prec@1 {meters[top1]:.3f}\t'
-                'Prec@5 {meters[top5]:.3f}'.format(
-                    i, len(eval_loader), meters=meters))
-
-    LOG.info(' * Prec@1 {top1.avg:.3f}\tPrec@5 {top5.avg:.3f}'
-             .format(top1=meters['top1'], top5=meters['top5']))
-    log.record(epoch, {
-        'step': global_step,
-        **meters.values(),
-        **meters.averages(),
-        **meters.sums()
-    })
-
-    return meters['top1'].avg
+            break  # TODO: DELETE
 
 
 def save_checkpoint(state, is_best, dirpath, epoch):
@@ -317,7 +216,6 @@ def save_checkpoint(state, is_best, dirpath, epoch):
 
 
 def adjust_learning_rate(optimizer, epoch, step_in_epoch, total_steps_in_epoch):
-    lr = args.lr
     epoch = epoch + step_in_epoch / total_steps_in_epoch
 
     # LR warm-up to handle large minibatch sizes from https://arxiv.org/abs/1706.02677

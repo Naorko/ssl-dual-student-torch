@@ -5,9 +5,7 @@ import multiple_student
 def execute_ms(args, context, train_loader, eval_loader):
     multiple_student.args = args
 
-    results = multiple_student.main(context, train_loader, eval_loader)
-
-    return {'Accuracy': 1}
+    return multiple_student.main(context, train_loader, eval_loader)
 
 
 def execute_mt(args, context, train_loader, eval_loader):

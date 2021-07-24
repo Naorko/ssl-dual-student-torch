@@ -3,13 +3,14 @@ import time
 
 import numpy as np
 import torch
-import torch.backends.cudnn as cudnn
 import torch.nn as nn
 import torch.nn.functional as F
+from sklearn.metrics import roc_auc_score, confusion_matrix
 from torch.autograd import Variable
 
-from src import architectures, ramps, cli, datasets, mt_func, run_context, losses
+from src import architectures, ramps, mt_func, losses
 from src.data import NO_LABEL
+from src.mt_func import accuracy
 from src.utils import *
 
 LOG = logging.getLogger('main')
@@ -48,56 +49,71 @@ def adjust_learning_rate(optimizer, epoch, step_in_epoch, total_steps_in_epoch):
         param_groups['lr'] = lr
 
 
-def validate(eval_loader, model, log, global_step, epoch):
-    class_criterion = nn.CrossEntropyLoss(size_average=False, ignore_index=NO_LABEL).cuda()
+def validate(eval_loader, model, log):
+    data_size = len(eval_loader.dataset)
     meters = AverageMeterSet()
+    # switch to evaluate mode
     model.eval()
 
-    end = time.time()
-    for i, (inputs, target) in enumerate(eval_loader):
-        meters.update('data_time', time.time() - end)
+    with torch.no_grad():
+        y_prob, y_true = [], []
+        for i, (inp, target) in enumerate(eval_loader):
+            labeled_minibatch_size = target.data.ne(NO_LABEL).sum().item()
+            assert labeled_minibatch_size > 0
+            meters.update('labeled_minibatch_size', labeled_minibatch_size)
 
-        input_var = torch.autograd.Variable(inputs, volatile=True)
-        target_var = torch.autograd.Variable(target.cuda(non_blocking=True), volatile=True)
+            # compute output and update inference time
+            inf_start = time.time()
+            output1, _ = model(inp)
+            inf_time = time.time() - inf_start
+            meters.update('inference_time', inf_time, n=labeled_minibatch_size)
 
-        minibatch_size = len(target_var)
-        labeled_minibatch_size = target_var.data.ne(NO_LABEL).sum().item()
-        assert labeled_minibatch_size > 0
-        meters.update('labeled_minibatch_size', labeled_minibatch_size)
+            softmax1 = F.softmax(output1, dim=1).cpu()
 
-        output1, output2 = model(input_var)
-        # softmax1, softmax2 = F.softmax(output1, dim=1), F.softmax(output2, dim=1)
-        class_loss = class_criterion(output1, target_var) / minibatch_size
+            y_prob.append(softmax1)
+            y_true.append(target)
+
+        y_prob, y_true = [torch.cat(ys, dim=0) for ys in [y_prob, y_true]]
+        y_pred = torch.argmax(y_prob, dim=1)
+
+        # update TPR, FPR and precision (using confusion matrix)
+        cnf_matrix = confusion_matrix(y_true, y_pred)
+        FP = cnf_matrix.sum(axis=0) - np.diag(cnf_matrix)
+        FN = cnf_matrix.sum(axis=1) - np.diag(cnf_matrix)
+        TP = np.diag(cnf_matrix)
+        TN = cnf_matrix.sum() - (FP + FN + TP)
+        FP, FN, TP, TN = FP.sum(), FN.sum(), TP.sum(), TN.sum()
+
+        TPR = TP / (TP + FN)
+        FPR = FP / (FP + TN)
+        Precision = TP / (TP + FP)
+        meters.update('TPR', TPR, n=data_size)
+        meters.update('FPR', FPR, n=data_size)
+        meters.update('Precision', Precision, n=data_size)
+
+        auc = roc_auc_score(y_true, y_prob, multi_class='ovr')
+        meters.update('AUC', auc, n=data_size)
 
         # measure accuracy and record loss
-        prec = mt_func.accuracy(output1.data, target_var.data, topk=(1, 5))
-        prec1, prec5 = prec[0].item(), prec[1].item()
+        prec1, prec5 = accuracy(y_prob, y_true, topk=(1, 5))
+        prec1, prec5 = prec1.item(), prec5.item()
 
-        meters.update('class_loss', class_loss.item(), labeled_minibatch_size)
-        meters.update('top1', prec1, labeled_minibatch_size)
-        meters.update('error1', 100.0 - prec1, labeled_minibatch_size)
-        meters.update('top5', prec5, labeled_minibatch_size)
-        meters.update('error5', 100.0 - prec5, labeled_minibatch_size)
+        meters.update('top1', prec1, data_size)
+        meters.update('error1', 100.0 - prec1, data_size)
+        meters.update('top5', prec5, data_size)
+        meters.update('error5', 100.0 - prec5, data_size)
 
-        # measure elapsed time
-        meters.update('batch_time', time.time() - end)
-        end = time.time()
+    LOG.info(' * Prec@1 {top1.avg:.3f}\tPrec@5 {top5.avg:.3f}'
+             .format(top1=meters['top1'], top5=meters['top5']))
+    # TODO: Epoch number? always 1
+    log.record(1, {
+        'step': global_step,
+        **meters.values(),
+        **meters.averages(),
+        **meters.sums()
+    })
 
-        if i % args.print_freq == 0:
-            LOG.info('Test: [{0}/{1}]\t'
-                     'Time {meters[batch_time]:.3f}\t'
-                     'Data {meters[data_time]:.3f}\t'
-                     'Class {meters[class_loss]:.4f}\t'
-                     'Prec@1 {meters[top1]:.3f}\t'
-                     'Prec@5 {meters[top5]:.3f}'.format(
-                i, len(eval_loader), meters=meters))
-
-    LOG.info(' * Prec@1 {top1.avg:.3f}\tPrec@5 {top5.avg:.3f}'.format(
-        top1=meters['top1'], top5=meters['top5']))
-    log.record(epoch, {'step': global_step, **meters.values(),
-                       **meters.averages(), **meters.sums()})
-
-    return meters['top1'].avg
+    return meters
 
 
 def train_epoch(train_loader, l_model, r_model, l_optimizer, r_optimizer, epoch, log):
@@ -343,81 +359,3 @@ def train_epoch(train_loader, l_model, r_model, l_optimizer, r_optimizer, epoch,
                 **meters.values(),
                 **meters.averages(),
                 **meters.sums()})
-
-
-def main(context):
-    global best_prec1
-    global global_step
-
-    # create loggers
-    checkpoint_path = context.transient_dir
-    training_log = context.create_train_log('training')
-    l_validation_log = context.create_train_log('l_validation')
-    r_validation_log = context.create_train_log('r_validation')
-
-    # create dataloaders
-    dataset_config = datasets.__dict__[args.dataset]()
-    num_classes = dataset_config.pop('num_classes')
-    train_loader, eval_loader = create_data_loaders(**dataset_config, args=args)
-
-    # create models
-    l_model = create_model(name='l', num_classes=num_classes)
-    r_model = create_model(name='r', num_classes=num_classes)
-    LOG.info(parameters_string(l_model))
-    LOG.info(parameters_string(r_model))
-
-    # create optimizers
-    l_optimizer = torch.optim.SGD(params=l_model.parameters(),
-                                  lr=args.lr,
-                                  momentum=args.momentum,
-                                  weight_decay=args.weight_decay,
-                                  nesterov=args.nesterov)
-    r_optimizer = torch.optim.SGD(params=r_model.parameters(),
-                                  lr=args.lr,
-                                  momentum=args.momentum,
-                                  weight_decay=args.weight_decay,
-                                  nesterov=args.nesterov)
-
-    cudnn.benchmark = True
-
-    # training
-    for epoch in range(0, args.epochs):
-        start_time = time.time()
-
-        train_epoch(train_loader, l_model, r_model, l_optimizer, r_optimizer, epoch, training_log)
-        LOG.info('--- training epoch in {} seconds ---'.format(time.time() - start_time))
-
-        is_best = False
-        if args.validation_epochs and (epoch + 1) % args.validation_epochs == 0:
-            start_time = time.time()
-
-            LOG.info('Validating the left model: ')
-            l_prec1 = validate(eval_loader, l_model, l_validation_log, global_step, epoch + 1)
-            LOG.info('Validating the right model: ')
-            r_prec1 = validate(eval_loader, r_model, r_validation_log, global_step, epoch + 1)
-
-            LOG.info('--- validation in {} seconds ---'.format(time.time() - start_time))
-            better_prec1 = l_prec1 if l_prec1 > r_prec1 else r_prec1
-            best_prec1 = max(better_prec1, best_prec1)
-            is_best = better_prec1 > best_prec1
-
-        # save checkpoint
-        if args.checkpoint_epochs and (epoch + 1) % args.checkpoint_epochs == 0:
-            mt_func.save_checkpoint({
-                'epoch': epoch + 1,
-                'global_step': global_step,
-                'best_prec1': best_prec1,
-                'arch': args.arch,
-                'l_model': l_model.state_dict(),
-                'r_model': r_model.state_dict(),
-                'l_optimizer': l_optimizer.state_dict(),
-                'r_optimizer': r_optimizer.state_dict(),
-            }, is_best, checkpoint_path, epoch + 1)
-
-    LOG.info('Best top1 prediction: {0}'.format(best_prec1))
-
-
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
-    args = cli.parser_commandline_args()
-    main(run_context.RunContext(__file__, 0))

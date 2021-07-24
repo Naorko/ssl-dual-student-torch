@@ -123,7 +123,7 @@ def nested_cross_validation(context, outer_k=10, inner_k=3):
                 val_loader = create_loader(eval_dataset, labeled_idxs, unlabeled_idxs, val_idx, eval=True)
 
                 results = execute_model(args, context, train_loader, val_loader)
-                current_accuracies.append(results['accuracy'])
+                current_accuracies.append(results['top1'])
 
             if np.mean(current_accuracies) > best_acc:
                 best_acc = np.mean(current_accuracies)
