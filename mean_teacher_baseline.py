@@ -15,6 +15,7 @@ import torch
 import torch.backends.cudnn as cudnn
 import torch.nn as nn
 import torch.nn.functional as F
+from sklearn.metrics import confusion_matrix
 from torch.autograd import Variable
 
 from src import datasets, ramps, architectures, cli, losses
@@ -228,7 +229,6 @@ def train(train_loader, model, ema_model, optimizer, epoch, log):
 def validate(eval_loader, model, log, global_step, epoch):
     class_criterion = nn.CrossEntropyLoss(size_average=False, ignore_index=NO_LABEL).cuda()
     meters = AverageMeterSet()
-
     # switch to evaluate mode
     model.eval()
 
@@ -244,9 +244,29 @@ def validate(eval_loader, model, log, global_step, epoch):
         assert labeled_minibatch_size > 0
         meters.update('labeled_minibatch_size', labeled_minibatch_size)
 
-        # compute output
+        # compute output and update inference time
+        inf_start = time.time()
         output1, output2 = model(input_var)
+        inf_time = time.time() - inf_start
+        meters.update('inference_time', inf_time, n=labeled_minibatch_size)
+
+        # update TPR, FPR and percison (using cnf matrix)
         softmax1, softmax2 = F.softmax(output1, dim=1), F.softmax(output2, dim=1)
+        cnf_matrix = confusion_matrix(target_var.cpu().detach().numpy(),
+                                      torch.argmax(output1, dim=0).cpu().detach().numpy())
+        FP = cnf_matrix.sum(axis=0) - np.diag(cnf_matrix)
+        FN = cnf_matrix.sum(axis=1) - np.diag(cnf_matrix)
+        TP = np.diag(cnf_matrix)
+        TN = cnf_matrix.sum() - (FP + FN + TP)
+        FP, FN, TP, TN = FP.sum(), FN.sum(), TP.sum(), TN.sum()
+
+        TPR = TP / (TP + FN)
+        FPR = FP / (FP + TN)
+        Precision = TP / (TP + FP)
+        meters.update('TPR', TPR, n=labeled_minibatch_size)
+        meters.update('FPR', FPR, n=labeled_minibatch_size)
+        meters.update('Precision', Precision, n=labeled_minibatch_size)
+
         class_loss = class_criterion(output1, target_var) / minibatch_size
 
         # measure accuracy and record loss

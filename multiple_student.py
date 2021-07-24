@@ -265,36 +265,36 @@ def main(context, train_loader, eval_loader):
         train_epoch(train_loader, model_list, optimizer_list, epoch, training_log)
         LOG.info('--- training epoch in {} seconds ---'.format(time.time() - start_time))
 
-        is_best = False
-        if args.validation_epochs and (epoch + 1) % args.validation_epochs == 0:
-            start_time = time.time()
-            prec1_list = []
-            for mdx, model in enumerate(model_list):
-                LOG.info('Validating the model-{0}: '.format(mdx))
-                prec1 = validate(eval_loader, model, validate_logs[mdx], global_step, epoch + 1)
-                prec1_list.append(prec1)
-
-            LOG.info('--- validation in {} seconds ---'.format(time.time() - start_time))
-            current_best_prec1 = np.max(np.asarray(prec1_list))
-            is_best = current_best_prec1 > best_prec1
-            best_prec1 = max(current_best_prec1, best_prec1)
-
-        # save checkpoint
-        if args.checkpoint_epochs and (epoch + 1) % args.checkpoint_epochs == 0:
-            checkpoint_dict = {
-                'epoch': epoch + 1,
-                'global_step': global_step,
-                'best_prec1': best_prec1,
-                'arch': args.arch
-            }
-            for mdx, model in enumerate(model_list):
-                checkpoint_dict['{0}_model'.format(mdx)] = model.state_dict()
-            for mdx, optimizer in enumerate(optimizer_list):
-                checkpoint_dict['{0}_optimizer'.format(mdx)] = optimizer.state_dict()
-
-            mt_func.save_checkpoint(checkpoint_dict, is_best, checkpoint_path, epoch + 1)
-
-    LOG.info('Best top1 prediction: {0}'.format(best_prec1))
+    #     is_best = False
+    #     # if args.validation_epochs and (epoch + 1) % args.validation_epochs == 0:
+    #     #     start_time = time.time()
+    prec1_list = []
+    for mdx, model in enumerate(model_list):
+        LOG.info('Validating the model-{0}: '.format(mdx))
+        prec1 = validate(eval_loader, model, validate_logs[mdx], global_step, epoch + 1)
+        prec1_list.append(prec1)
+    #     #
+    #     #     LOG.info('--- validation in {} seconds ---'.format(time.time() - start_time))
+    #     #     current_best_prec1 = np.max(np.asarray(prec1_list))
+    #     #     is_best = current_best_prec1 > best_prec1
+    #     #     best_prec1 = max(current_best_prec1, best_prec1)
+    #
+    #     # save checkpoint
+    #     if args.checkpoint_epochs and (epoch + 1) % args.checkpoint_epochs == 0:
+    #         checkpoint_dict = {
+    #             'epoch': epoch + 1,
+    #             'global_step': global_step,
+    #             'best_prec1': best_prec1,
+    #             'arch': args.arch
+    #         }
+    #         for mdx, model in enumerate(model_list):
+    #             checkpoint_dict['{0}_model'.format(mdx)] = model.state_dict()
+    #         for mdx, optimizer in enumerate(optimizer_list):
+    #             checkpoint_dict['{0}_optimizer'.format(mdx)] = optimizer.state_dict()
+    #
+    #         mt_func.save_checkpoint(checkpoint_dict, is_best, checkpoint_path, epoch + 1)
+    #
+    # LOG.info('Best top1 prediction: {0}'.format(best_prec1))
 
     return {'accuracy': 1}  # TODO: Complete evaluation
 

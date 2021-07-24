@@ -1,4 +1,5 @@
 import logging
+import os
 import random
 from itertools import product
 
@@ -151,7 +152,7 @@ def defaults(arch, dataset, n_labels, net_arch='cnn13'):
 
         # data
         'dataset': dataset,
-        'labels': f'/home/naorko/DL/ssl-dual-student-torch/data-local/labels/{dataset}/{n_labels}.txt',
+        'labels': os.path.join(os.getcwd(), 'data-local', 'labels', dataset, f'{n_labels}.txt'),
 
         # Technical Details
         'workers': 2,
