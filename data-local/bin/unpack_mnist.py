@@ -17,8 +17,8 @@ import numpy as np
 
 
 work_dir = os.path.abspath(sys.argv[1])
-train_dir = os.path.abspath(os.path.join(sys.argv[2], 'train'))
-test_dir = os.path.abspath(os.path.join(sys.argv[2], 'test'))
+train_dir = os.path.abspath(sys.argv[2])
+test_dir = os.path.abspath(sys.argv[2])
 
 mnist_train = MNIST(work_dir, train=True, download=True)
 mnist_test = MNIST(work_dir, train=False, download=True)

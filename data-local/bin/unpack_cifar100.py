@@ -12,8 +12,8 @@ work_dir_path = sys.argv[1] # workdir
 images_dir_path = sys.argv[2] # images/cifar/cifar100/by-image/
 
 work_dir = os.path.abspath(work_dir_path)
-test_dir = os.path.abspath(os.path.join(images_dir_path, 'test'))
-train_dir = os.path.abspath(os.path.join(images_dir_path, 'train+val'))
+test_dir = os.path.abspath(images_dir_path)
+train_dir = os.path.abspath(images_dir_path)
 
 cifar100 = CIFAR100(work_dir, download=True)
 
