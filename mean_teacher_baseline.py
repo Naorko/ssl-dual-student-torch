@@ -201,7 +201,6 @@ def train(train_loader, model, ema_model, optimizer, epoch, log):
                 **meters.averages(),
                 **meters.sums()
             })
-            break  # TODO: DELETE
 
 
 def save_checkpoint(state, is_best, dirpath, epoch):
