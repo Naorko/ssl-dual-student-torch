@@ -141,29 +141,28 @@ def nested_cross_validation(context, outer_k=10, inner_k=3):
         results = execute_model(args, context, train_val_loader, test_loader)
 
 
-def defaults(arch):
+def defaults(arch, dataset, n_labels, net_arch='cnn13'):
     args = {
+        # architecture
         'model-arch': arch,
+        'arch': net_arch,
+        'model_num': 2 if arch == 'mt' else 4,
 
         # data
-        'dataset': 'cifar100',
-        'labels': '/home/naorko/DL/ssl-dual-student-torch/data-local/labels/cifar100/10000_balanced_labels/10.txt',
+        'dataset': dataset,
+        'labels': f'/home/naorko/DL/ssl-dual-student-torch/data-local/labels/{dataset}/{n_labels}.txt',
 
         # Technical Details
         'workers': 2,
 
         # optimization
-        'batch-size': 128,
-        'labeled-batch-size': 31,
+        'batch-size': 100,
+        'labeled-batch-size': 50,
 
         # optimizer
-        'lr': 0.2,
+        'lr': 0.1,
         'nesterov': True,
-        'weight-decay': 2e-4,
-
-        # architecture
-        'arch': 'cnn13',
-        'model_num': 4,
+        'weight-decay': 1e-4,
 
         # constraint
         'consistency_scale': 10.0,
@@ -177,9 +176,9 @@ def defaults(arch):
 
         'consistency': 100.0,  # mt-only
 
-        'title': 'ms_cifar10_1000l_cnn13',
-        'n_labels': 1000,
-        'epochs': 1,  # 300, TODO: More epochs?
+        'title': f'{arch}_{dataset}_{n_labels}l_{net_arch}',
+        'n_labels': n_labels,
+        'epochs': 2,  # 300, TODO: More epochs?
 
         # debug
         'print_freq': 10,
@@ -193,7 +192,7 @@ def run(title, n_labels, **kwargs):
     global args
     LOG.info('run title: %s', title)
 
-    context = RunContext(__file__, "{}".format(n_labels))
+    context = RunContext(title, "{}".format(n_labels))
     fh = logging.FileHandler('{0}/log.txt'.format(context.result_dir))
     fh.setLevel(logging.INFO)
     LOG.addHandler(fh)
@@ -203,5 +202,5 @@ def run(title, n_labels, **kwargs):
 
 
 if __name__ == '__main__':
-    args = defaults('ms')
+    args = defaults('mt', 'cifar100', 10000)
     run(**args)

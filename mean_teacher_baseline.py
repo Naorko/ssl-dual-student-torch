@@ -76,7 +76,7 @@ def main(context, train_loader, eval_loader):
         train(train_loader, model, ema_model, optimizer, epoch, training_log)
         LOG.info("--- training epoch in %s seconds ---" % (time.time() - start_time))
 
-        if args.evaluation_epochs and (epoch + 1) % args.evaluation_epochs == 0:
+        if args.validation_epochs and (epoch + 1) % args.validation_epochs == 0:
             start_time = time.time()
             LOG.info("Evaluating the primary model:")
             prec1 = validate(eval_loader, model, validation_log, global_step, epoch + 1)
