@@ -75,6 +75,7 @@ def cinic10(tnum=2):
         'num_classes': 10
     }
 
+
 @export
 def cub200(tnum=2):
     channel_stats = dict(mean=[0.5, 0.5, 0.5],

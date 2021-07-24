@@ -4,7 +4,7 @@ from itertools import product
 
 import numpy as np
 import torchvision
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 from model_executor import execute_model
 from src import datasets, data
@@ -48,10 +48,10 @@ def extract_fold(labeled_dict, unlabeled_dict, fold_idxs):
 
 def create_loader(dataset, labeled_idxs, unlabeled_idxs, idxs_in_dict, eval=False):
     labeled, unlabeled = extract_fold(labeled_idxs, unlabeled_idxs, idxs_in_dict)
-    sampler = data.TwoStreamBatchSampler(
-        unlabeled, labeled, args.batch_size, args.labeled_batch_size)
 
     if not eval:
+        sampler = data.TwoStreamBatchSampler(
+            unlabeled, labeled, args.batch_size, args.labeled_batch_size)
         loader = DataLoader(
             dataset,
             batch_sampler=sampler,
@@ -59,6 +59,8 @@ def create_loader(dataset, labeled_idxs, unlabeled_idxs, idxs_in_dict, eval=Fals
             pin_memory=True)
 
     else:
+        samples_idxs = labeled + unlabeled
+        dataset = Subset(dataset, samples_idxs)
         loader = DataLoader(
             dataset,
             batch_size=args.batch_size,
@@ -83,7 +85,6 @@ def nested_cross_validation(context, outer_k=10, inner_k=3):
         labels = dict(line.split(' ') for line in f.read().splitlines())
 
     labeled_idxs, unlabeled_idxs = data.relabel_dataset_dict(train_dataset, labels)
-    _, _ = data.relabel_dataset(eval_dataset, labels)
 
     labeled_idxs = partition_dict(labeled_idxs, outer_k)
     unlabeled_idxs = partition_dict(unlabeled_idxs, outer_k)
@@ -98,7 +99,9 @@ def nested_cross_validation(context, outer_k=10, inner_k=3):
         best_acc = 0
         best_params = (0, 0, 0, 0)
         # select 50 random params
-        hp_params = random.sample(hp_product(), 50)
+        default_params = [
+            (args.batch_size, args.labeled_batch_size / args.batch_size, args.weight_decay, args.momentum)]
+        hp_params = default_params + random.sample(hp_product(), 49)
         for bs_hp, n_labels_ratio_hp, wd_hp, momentum_hp in hp_params:
             # update args
             args.batch_size = bs_hp
@@ -144,32 +147,34 @@ def defaults(arch):
 
         # data
         'dataset': 'cifar100',
-        'labels': '/home/naorko/DL/ssl-dual-student-torch/data-local/labels/cifar100/10000_balanced_labels/00.txt',
+        'labels': '/home/naorko/DL/ssl-dual-student-torch/data-local/labels/cifar100/10000_balanced_labels/10.txt',
 
         # Technical Details
         'workers': 2,
 
         # optimization
-        'batch-size': 100,
-        'labeled-batch-size': 50,
+        'batch-size': 128,
+        'labeled-batch-size': 31,
 
         # optimizer
-        'lr': 0.1,
+        'lr': 0.2,
         'nesterov': True,
-        'weight-decay': 0,
-        'momentum': 0.9,
+        'weight-decay': 2e-4,
 
         # architecture
         'arch': 'cnn13',
-        'model_num': 2,
+        'model_num': 4,
 
         # constraint
         'consistency_scale': 10.0,
         'consistency_rampup': 5,
-        'stable_threshold': 0.8,
+
+        'stable_threshold': 0.4,
         'stabilization_scale': 100.0,
         'stabilization_rampup': 5,
+
         'logit_distance_cost': 0.01,
+
         'consistency': 100.0,  # mt-only
 
         'title': 'ms_cifar10_1000l_cnn13',
@@ -177,7 +182,7 @@ def defaults(arch):
         'epochs': 1,  # 300, TODO: More epochs?
 
         # debug
-        'print_freq': 1,
+        'print_freq': 10,
         'validation_epochs': 1,
         'checkpoint_epochs': 1
     }

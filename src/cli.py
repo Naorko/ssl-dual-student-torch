@@ -19,7 +19,6 @@ def create_parser():
     parser.add_argument('--dataset', metavar='DATASET', default='cifar10', choices=datasets.__all__,
                         help='dataset: ' + ' | '.join(datasets.__all__) + ' (default: cifar10)')
 
-
     parser.add_argument('--workers', default=4, type=int, metavar='N',
                         help='number of data loading workers (default: 4)')
     parser.add_argument('--labels', default=None, type=str, metavar='FILE',
@@ -79,7 +78,7 @@ def create_parser():
                         help='let the student model have two outputs and use an MSE loss　between '
                              'the logits with the given weight (default: only have one output)')
     parser.add_argument('--ema-decay', default=0.97, type=float, metavar='ALPHA',
-                        help='ema variable decay rate (default: 0.97)') # MT- ONLY!
+                        help='ema variable decay rate (default: 0.97)')  # MT- ONLY!
     parser.add_argument('--lr-rampdown-epochs', default=210, type=int, metavar='RAMPDOWN',
                         help='lr rampdown epochs (default: 210)')  # MT- ONLY!
 

@@ -117,8 +117,6 @@ def train_epoch(train_loader, l_model, r_model, l_optimizer, r_optimizer, epoch,
 
     end = time.time()
     for i, ((l_input, r_input), target) in enumerate(train_loader):
-        if i == 5:
-            break
         meters.update('data_time', time.time() - end)
 
         # adjust learning rate

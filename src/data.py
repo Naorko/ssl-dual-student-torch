@@ -115,6 +115,7 @@ def relabel_dataset_dict(dataset, labels):
             labeled_idxs[label_idx].append(idx)
         else:
             dataset.imgs[idx] = img_path, NO_LABEL
+            dataset.targets[idx] = NO_LABEL
             unlabeled_idxs[label_idx].append(idx)
 
     if len(labels) != 0:
