@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from sklearn.metrics import roc_auc_score, confusion_matrix
+from sklearn.metrics import roc_auc_score, confusion_matrix, average_precision_score
 from torch.autograd import Variable
 
 from src import architectures, ramps, mt_func, losses
@@ -50,6 +50,7 @@ def adjust_learning_rate(optimizer, epoch, step_in_epoch, total_steps_in_epoch):
 
 
 def validate(eval_loader, model, log):
+    global global_step
     data_size = len(eval_loader.dataset)
     meters = AverageMeterSet()
     # switch to evaluate mode
@@ -60,7 +61,6 @@ def validate(eval_loader, model, log):
         for i, (inp, target) in enumerate(eval_loader):
             labeled_minibatch_size = target.data.ne(NO_LABEL).sum().item()
             assert labeled_minibatch_size > 0
-            meters.update('labeled_minibatch_size', labeled_minibatch_size)
 
             # compute output and update inference time
             inf_start = time.time()
@@ -94,24 +94,24 @@ def validate(eval_loader, model, log):
         auc = roc_auc_score(y_true, y_prob, multi_class='ovr')
         meters.update('AUC', auc, n=data_size)
 
+        # pr_curve = average_precision_score(y_true, y_prob)
+        # meters.update('PR-Curve', pr_curve, n=data_size)
+
         # measure accuracy and record loss
         prec1, prec5 = accuracy(y_prob, y_true, topk=(1, 5))
         prec1, prec5 = prec1.item(), prec5.item()
 
-        meters.update('top1', prec1, data_size)
-        meters.update('error1', 100.0 - prec1, data_size)
-        meters.update('top5', prec5, data_size)
-        meters.update('error5', 100.0 - prec5, data_size)
+        meters.update('Accuracy-top1', prec1, data_size)
+        meters.update('Accuracy-top5', prec5, data_size)
 
     LOG.info(' * Prec@1 {top1.avg:.3f}\tPrec@5 {top5.avg:.3f}'
-             .format(top1=meters['top1'], top5=meters['top5']))
-    # TODO: Epoch number? always 1
-    log.record(1, {
-        'step': global_step,
-        **meters.values(),
-        **meters.averages(),
-        **meters.sums()
+             .format(top1=meters['Accuracy-top1'], top5=meters['Accuracy-top5']))
+
+    log.record(global_step, {
+        **meters.values()
     })
+
+    global_step += 1
 
     return meters
 

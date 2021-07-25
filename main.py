@@ -13,7 +13,13 @@ from src import datasets, data
 from src.cli import parse_dict_args, LOG
 from src.run_context import RunContext
 
+HP_COMBINATIONS = 1
+
 args = None
+
+algo_short_to_name = {'mt': 'Mean Teacher',
+                      'ms': 'Multiple Students',
+                      'msi': 'Multiple Students Improved'}
 
 
 def hp_product():
@@ -75,6 +81,8 @@ def create_loader(dataset, labeled_idxs, unlabeled_idxs, idxs_in_dict, eval=Fals
 
 
 def nested_cross_validation(context, outer_k=10, inner_k=3):
+    ncv_log = context.create_train_log('Final_Results')
+
     # create dataloaders
     dataset_config = datasets.__dict__[args.dataset](tnum=args.model_num)
     num_classes = dataset_config.pop('num_classes')
@@ -97,13 +105,12 @@ def nested_cross_validation(context, outer_k=10, inner_k=3):
 
         inner_fold_split = partition(train_val_idx, inner_k)
 
+        default_params = (args.batch_size, args.labeled_batch_size / args.batch_size, args.weight_decay, args.momentum)
         # Initialize best results
         best_acc = 0
-        best_params = (0, 0, 0, 0)
+        best_params = default_params
         # select 50 random params
-        default_params = [
-            (args.batch_size, args.labeled_batch_size / args.batch_size, args.weight_decay, args.momentum)]
-        hp_params = default_params + random.sample(hp_product(), 49)
+        hp_params = [default_params] + random.sample(hp_product(), HP_COMBINATIONS)
         for bs_hp, n_labels_ratio_hp, wd_hp, momentum_hp in hp_params:
             # update args
             args.batch_size = bs_hp
@@ -123,8 +130,9 @@ def nested_cross_validation(context, outer_k=10, inner_k=3):
                 val_loader = create_loader(eval_dataset, labeled_idxs, unlabeled_idxs, val_idx, eval=True)
 
                 results = execute_model(args, context, train_loader, val_loader)
-                current_accuracies.append(results['top1'])
+                current_accuracies.append(results['Accuracy-top1'].val)
 
+            # Check if the current hyper params are better
             if np.mean(current_accuracies) > best_acc:
                 best_acc = np.mean(current_accuracies)
                 best_params = bs_hp, n_labels_ratio_hp, wd_hp, momentum_hp
@@ -141,6 +149,20 @@ def nested_cross_validation(context, outer_k=10, inner_k=3):
         test_loader = create_loader(eval_dataset, labeled_idxs, unlabeled_idxs, [test_idx], eval=True)
 
         results = execute_model(args, context, train_val_loader, test_loader)
+        results_dict = results.values()
+        results_dict.pop('inference_time')
+        results_dict['Inference Time'] = results['inference_time'].avg * 1000
+
+        ncv_log.record(test_idx+1, {
+            'Dataset Name': f'{args.dataset}_{args.n_labels}',
+            'Algorithm Name': algo_short_to_name[args.model_arch],
+            'Cross Validation': str(test_idx + 1),
+            'Hyper parameter': str({'batch_size': bs_hp,
+                                    'labels_ration': n_labels_ratio_hp,
+                                    'weight_decay': wd_hp,
+                                    'momentum': momentum_hp}),
+            **results_dict
+        }, force_update=True)
 
 
 def defaults(arch, dataset, n_labels, net_arch='cnn13'):
@@ -152,6 +174,7 @@ def defaults(arch, dataset, n_labels, net_arch='cnn13'):
 
         # data
         'dataset': dataset,
+        'n_labels': n_labels,
         'labels': os.path.join(os.getcwd(), 'data-local', 'labels', dataset, f'{n_labels}.txt'),
 
         # Technical Details
@@ -179,7 +202,6 @@ def defaults(arch, dataset, n_labels, net_arch='cnn13'):
         'consistency': 100.0,  # mt-only
 
         'title': f'{arch}_{dataset}_{n_labels}l_{net_arch}',
-        'n_labels': n_labels,
         'epochs': 2,  # 300, TODO: More epochs?
 
         # debug
@@ -202,7 +224,7 @@ def run(title, n_labels, **kwargs):
     fh.setLevel(logging.INFO)
     LOG.addHandler(fh)
 
-    args = parse_dict_args(**kwargs)
+    args = parse_dict_args(n_labels=n_labels, **kwargs)
     nested_cross_validation(context)
 
 

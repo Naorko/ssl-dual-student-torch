@@ -16,6 +16,7 @@ import torch.backends.cudnn as cudnn
 import torch.nn as nn
 from torch.autograd import Variable
 
+import dual_student
 from dual_student import validate, create_model
 from src import datasets, ramps, cli, losses
 from src.data import NO_LABEL
@@ -33,6 +34,9 @@ global_step = 0
 def main(context, train_loader, eval_loader):
     global global_step
     global best_prec1
+
+    # set variable 'args' in the file 'dual_student.py'
+    dual_student.args = args
 
     checkpoint_path = context.transient_dir
     training_log = context.create_train_log("training")
@@ -70,7 +74,7 @@ def main(context, train_loader, eval_loader):
     ema_meters = validate(eval_loader, ema_model, ema_validation_log)
     LOG.info("--- validation in %s seconds ---" % (time.time() - start_time))
 
-    if ema_meters['top1'] > meters['top1']:
+    if ema_meters['Accuracy-top1'].val > meters['Accuracy-top1'].val:
         best_model_meters = ema_meters
     else:
         best_model_meters = meters
@@ -101,14 +105,14 @@ def train(train_loader, model, ema_model, optimizer, epoch, log):
     ema_model.train()
 
     end = time.time()
-    for i, ((input, ema_input), target) in enumerate(train_loader):
+    for i, ((inp, ema_input), target) in enumerate(train_loader):
         # measure data loading time
         meters.update('data_time', time.time() - end)
 
         adjust_learning_rate(optimizer, epoch, i, len(train_loader))
         meters.update('lr', optimizer.param_groups[0]['lr'])
 
-        input_var = torch.autograd.Variable(input)
+        input_var = torch.autograd.Variable(inp)
         ema_input_var = torch.autograd.Variable(ema_input, volatile=True)
         target_var = torch.autograd.Variable(target.cuda(non_blocking=True))
 

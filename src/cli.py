@@ -18,6 +18,8 @@ def create_parser():
     # data
     parser.add_argument('--dataset', metavar='DATASET', default='cifar10', choices=datasets.__all__,
                         help='dataset: ' + ' | '.join(datasets.__all__) + ' (default: cifar10)')
+    parser.add_argument('--n-labels', metavar='LABELS', default=4, type=int,
+                        help='How many labels are in the dataset (default: 10000)')
 
     parser.add_argument('--workers', default=4, type=int, metavar='N',
                         help='number of data loading workers (default: 4)')

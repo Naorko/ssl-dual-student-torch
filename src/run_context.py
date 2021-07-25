@@ -36,10 +36,10 @@ class TrainLog:
         df = self._as_dataframe()
         df.to_csv(self.log_file_path)
 
-    def _record(self, step, col_val_dict):
+    def _record(self, step, col_val_dict, force_update=False):
         with self._log_lock:
             self._log[step].update(col_val_dict)
-            if time.time() - self._last_update_time >= self.INCREMENTAL_UPDATE_TIME:
+            if time.time() - self._last_update_time >= self.INCREMENTAL_UPDATE_TIME or force_update:
                 self._last_update_time = time.time()
                 self.save()
 

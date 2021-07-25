@@ -272,10 +272,11 @@ def main(context, train_loader, eval_loader):
         meters = validate(eval_loader, model, validate_logs[mdx])
         meters_list.append(meters)
 
-    accuracies = [m['top1'] for m in meters_list]
+    accuracies = [m['Accuracy-top1'].val for m in meters_list]
 
-    best_model_meters = meters_list[np.argmax(accuracies)]
-    LOG.info('Best top1 prediction: {0}'.format(max(accuracies)))
+    best_mdx = np.argmax(accuracies)
+    best_model_meters = meters_list[best_mdx]
+    LOG.info(f'Best top1 prediction: {accuracies[best_mdx]}')
 
     best_model_meters.update('Training time per epoch', (end_train - start_train) / args.epochs)
     return best_model_meters
