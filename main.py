@@ -205,7 +205,7 @@ def defaults(arch, dataset, n_labels, net_arch='cnn13'):
         'consistency': 100.0,  # mt-only
 
         'title': f'{arch}_{dataset}_{n_labels}l_{net_arch}',
-        'epochs': 2,  # 300, TODO: More epochs?
+        'epochs': 100,
 
         # debug
         'print_freq': 10,
