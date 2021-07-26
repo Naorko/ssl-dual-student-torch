@@ -9,7 +9,7 @@ DIR=$1
 LABELS_PER_CLASS=$2
 
 (
-    cd $DIR/train                   # Go to the train directory
+    cd $DIR                         # Go to the train directory
     find * -maxdepth 0 -type d |    # Find the class directories
     xargs -n 1 -i{} sh -c  "        # Loop through the classes names, running the following for each:
         ls {} |                     # List all files in the class directory
