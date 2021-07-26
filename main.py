@@ -14,7 +14,7 @@ from src import datasets, data
 from src.cli import parse_dict_args, LOG
 from src.run_context import RunContext
 
-HP_COMBINATIONS = 1
+HP_COMBINATIONS = 49
 
 args = None
 
