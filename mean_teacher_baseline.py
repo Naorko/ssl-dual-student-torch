@@ -207,17 +207,6 @@ def train(train_loader, model, ema_model, optimizer, epoch, log):
             })
 
 
-def save_checkpoint(state, is_best, dirpath, epoch):
-    filename = 'checkpoint.{}.ckpt'.format(epoch)
-    checkpoint_path = os.path.join(dirpath, filename)
-    best_path = os.path.join(dirpath, 'best.ckpt')
-    torch.save(state, checkpoint_path)
-    LOG.info("--- checkpoint saved to %s ---" % checkpoint_path)
-    if is_best:
-        shutil.copyfile(checkpoint_path, best_path)
-        LOG.info("--- checkpoint copied to %s ---" % best_path)
-
-
 def adjust_learning_rate(optimizer, epoch, step_in_epoch, total_steps_in_epoch):
     epoch = epoch + step_in_epoch / total_steps_in_epoch
 

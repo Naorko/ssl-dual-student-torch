@@ -1,6 +1,7 @@
 import logging
 import os
 import random
+import sys
 from itertools import product
 
 import numpy as np
@@ -231,8 +232,7 @@ def run(title, n_labels, **kwargs):
 
 
 if __name__ == '__main__':
-    args = defaults('mt', 'cifar100', 10000)
-    # args = defaults('mt', 'cinic10', 50000)
-    # args = defaults('mt', 'cub200', 2000)
-    # args = defaults('mt', 'mnist', 30000, net_arch='cnn3')
+    model_arch, dataset, n_labels = sys.argv[1:]
+    net_arch = 'cnn3' if dataset == 'mnist' else 'cnn13'
+    args = defaults(model_arch, dataset, n_labels, net_arch)
     run(**args)
