@@ -5,7 +5,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from sklearn.metrics import roc_auc_score, confusion_matrix, average_precision_score
+from sklearn import metrics
+from sklearn.preprocessing import label_binarize
 from torch.autograd import Variable
 
 from src import architectures, ramps, mt_func, losses
@@ -77,7 +78,7 @@ def validate(eval_loader, model, log):
         y_pred = torch.argmax(y_prob, dim=1)
 
         # update TPR, FPR and precision (using confusion matrix)
-        cnf_matrix = confusion_matrix(y_true, y_pred)
+        cnf_matrix = metrics.confusion_matrix(y_true, y_pred)
         FP = cnf_matrix.sum(axis=0) - np.diag(cnf_matrix)
         FN = cnf_matrix.sum(axis=1) - np.diag(cnf_matrix)
         TP = np.diag(cnf_matrix)
@@ -91,11 +92,14 @@ def validate(eval_loader, model, log):
         meters.update('FPR', FPR, n=data_size)
         meters.update('Precision', Precision, n=data_size)
 
-        auc = roc_auc_score(y_true, y_prob, multi_class='ovr')
+        auc = metrics.roc_auc_score(y_true, y_prob, multi_class='ovr')
         meters.update('AUC', auc, n=data_size)
 
-        # pr_curve = average_precision_score(y_true, y_prob)
-        # meters.update('PR-Curve', pr_curve, n=data_size)
+        num_classes = len(eval_loader.dataset.dataset.classes)
+        y_true_one_hot = label_binarize(y_true, classes=[*range(num_classes)])
+        pr_curves = [metrics.average_precision_score(y_true_one_hot[:, i], y_prob[:, i]) for i in range(num_classes)]
+        pr_curve = np.mean(pr_curves)
+        meters.update('PR-Curve', pr_curve, n=data_size)
 
         # measure accuracy and record loss
         prec1, prec5 = accuracy(y_prob, y_true, topk=(1, 5))

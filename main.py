@@ -162,7 +162,9 @@ def nested_cross_validation(context, outer_k=10, inner_k=3):
                                     'weight_decay': wd_hp,
                                     'momentum': momentum_hp}),
             **results_dict
-        }, force_update=True)
+        })
+
+    ncv_log.save()
 
 
 def defaults(arch, dataset, n_labels, net_arch='cnn13'):
@@ -230,4 +232,7 @@ def run(title, n_labels, **kwargs):
 
 if __name__ == '__main__':
     args = defaults('mt', 'cifar100', 10000)
+    # args = defaults('mt', 'cinic10', 50000)
+    # args = defaults('mt', 'cub200', 2000)
+    # args = defaults('mt', 'mnist', 30000, net_arch='cnn3')
     run(**args)
